@@ -28,7 +28,8 @@ def convert(dataset_dir, json_name, sort_function=sorted, max_count=10000):
 
     # custom webdataset ShardWriter Encoder
     add_handlers(default_handlers, "jpgs", lambda data: pickle.dumps([imageencoder(d, "jpg") for d in data]))
-    add_handlers(default_handlers, "videos", lambda data: pickle.dumps([[imageencoder(d, "jpg") for d in video] for video in data]))
+    add_handlers(default_handlers, "mp4s", lambda data: pickle.dumps([d for d in data]))
+    add_handlers(default_handlers, "mp3s", lambda data: pickle.dumps([d for d in data]))
 
     has_idx = None
     with wds.ShardWriter(os.path.join(output, 'pretrain-%d.tar'), maxcount=max_count) as shard_writer:
@@ -37,29 +38,6 @@ def convert(dataset_dir, json_name, sort_function=sorted, max_count=10000):
             image_datas = []
             for image in entry.pop('images', []):
                 image_datas.append(cv2.imread(os.path.join(dataset_dir, image), cv2.IMREAD_UNCHANGED))
-            
-            video_datas = []
-            second_per_grid_ts = []
-            for video in entry.pop('videos', []):
-                video_noext, _ = os.path.splitext(video)
-                frame_folder = os.path.join(dataset_dir, video_noext)
-                # NOTE: we implicitly require a `${frame_folder}.json`` file containing fps rates of each video
-                # otherwise fps will be regarded as `1` by default.
-                if os.path.exists(frame_folder + '.json'):
-                    with open(frame_folder + '.json', 'r') as f:
-                        fps = float(json.load(f)['fps'])
-                else:
-                    fps = 2.0
-
-                frames = []
-                for frame in sort_function(os.listdir(frame_folder)):
-                    frames.append(cv2.imread(os.path.join(frame_folder, frame), cv2.IMREAD_UNCHANGED))
-                
-                if len(frames) % 2 == 1:
-                    frames = frames[:-1]
-                video_datas.append(frames)
-                second_per_grid_ts.append(1 / fps)
-
 
             if has_idx is None:
                 has_idx = 'id' in entry
@@ -68,10 +46,12 @@ def convert(dataset_dir, json_name, sort_function=sorted, max_count=10000):
             sample = {
                 "__key__": entry.pop('id', str(idx)), 
                 "jpgs": image_datas,
-                'videos': video_datas,
+                'mp4s': [],
+                "mp3s": [],
                 "json": json.dumps({
                     'conversations': entry['conversations'],
-                    'second_per_grid_ts': second_per_grid_ts
+                    'discrete_tokens': entry.get('discrete_tokens', []),
+                    'second_per_grid_ts': []
                 }).encode("utf-8"),
             }
             shard_writer.write(sample)
@@ -104,7 +84,8 @@ def generate_configs(path: EPath, split, shuffle_tars=True, num_workers=32):
         '__module__': 'megatron_patch.data.multimodal_dataset',
         'field_map': {
             'imgs': 'jpgs',
-            'videos': 'videos',
+            'videos': 'mp4s',
+            "audios": "mp3s",
             'conversation': 'json'
         }
     }

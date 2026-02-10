@@ -246,81 +246,21 @@ class TaskEncoder(DefaultTaskEncoder[ChatMLSample, EncodedSample, EncodedBatch, 
         # NOTE: generate qwen2vl conversations
         conversation = json.loads(sample.conversation) if isinstance(sample.conversation, (str, bytes)) else sample.conversation
         second_per_grid_ts = [1 / 2.0] * len(video_thw_grids)
-        if 'conversations' in conversation:
-            second_per_grid_ts = conversation.get('second_per_grid_ts', second_per_grid_ts)
-            second_per_grid_ts = [float(i) for i in second_per_grid_ts]
-            conversation = conversation['conversations']
- 
-        role_key = 'role'
-        content_key = 'content'
-
-        # NOTE: assume the conversation format is: [System]? (User Assistant)+
-        converted_conversation = []
-        if len(conversation) % 2 == 0:
-            # Default Prompt
-            converted_conversation.append({
-                'role': 'system',
-                'content': 'You are a helpful assistant.'
-            })
-        else:
-            converted_conversation.append({
-                'role': 'system',
-                'content': conversation[0][content_key]
-            })
-            conversation = conversation[1:]
-        
-        EXPECTED_ROLE = ['user', 'assistant']
-        for turn_idx, turn in enumerate(conversation):
-            role = turn[role_key]
-            if role != EXPECTED_ROLE[turn_idx % len(EXPECTED_ROLE)]:
-                raise InternalWarning(f"Expect conversation organized in order: [sys] user assistant user assistant..., but got role '{role}' in turn {turn_idx}")
-            content = turn[content_key]
-
-            if role == 'user':
-                content = convert_to_qwen3_content(content)
-
-            converted_conversation.append({
-                'role': role,
-                'content': content
-            })
-        conversation = converted_conversation
-        #print(f"conversation is {conversation}")
-        # NOTE: we need to mask all system/user input tokens and assistant generation prefix tokens
-        def get_input_ids(conversation):
-            output = self.tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")
-            try:
-                input_ids = output['input_ids'][0]
-            except:
-                input_ids = output[0]
-            return input_ids
-        
-        input_ids = get_input_ids(conversation)
+        assert 'conversations' in conversation
+        assert 'discrete_tokens' in conversation
+        assert 'second_per_grid_ts' in conversation
+        second_per_grid_ts = conversation.get('second_per_grid_ts', second_per_grid_ts)
+        second_per_grid_ts = [float(i) for i in second_per_grid_ts]
+        discrete_tokens = conversation['discrete_tokens']
+        conversation = conversation['conversations']
+        conversation = '\n'.join([conv['content'] for conv in conversation])
+        conversation = conversation.replace("<image>", "<|vision_start|><|image_pad|><|vision_end|>")
+        input_ids = self.tokenizer(conversation, padding='do_not_pad', return_tensors="np").input_ids[0]
         target = input_ids.copy()
-
-        system_prompt_prefix = len(get_input_ids([conversation[0]]))
-        assistant_generation_prefix = 3
         pad_token_id = self.tokenizer.pad_token_id
-
-        target[:system_prompt_prefix] = pad_token_id
-        offset = system_prompt_prefix
-        for turn_idx, turn in enumerate(conversation[1:]):
-            turn_tokens = get_input_ids([turn])
-            turn_content = turn_tokens
-            n_tokens = len(turn_content)
-            # print(f"n_tokens is {n_tokens}")
-            if (target[offset: offset + n_tokens] != turn_content).any():
-                raise InternalWarning("Encode Error")
-
-            if turn['role'] == 'user':
-                target[offset: offset + n_tokens] = pad_token_id
-            elif turn['role'] == 'assistant':
-                target[offset: offset + assistant_generation_prefix] = pad_token_id   
-            offset += n_tokens
-
         # NOTE: expand image_pad & video_pad & audio_pad
         merge_length = self.merge_size**2
         image_token_id, video_token_id, audio_token_id = self.tokenizer.encode(['<|image_pad|>', '<|video_pad|>', '<|audio_pad|>'])
-
         image_token_indices = np.where(input_ids == image_token_id)[0]
         assert len(image_token_indices) == len(image_thw_grids), f"With {len(image_thw_grids)} images in the sample, but {len(image_token_indices)} image placeholders!"
         video_token_indices = np.where(input_ids == video_token_id)[0]
@@ -332,13 +272,16 @@ class TaskEncoder(DefaultTaskEncoder[ChatMLSample, EncodedSample, EncodedBatch, 
             np.array(video_thw_grids, dtype=np.int64),
             np.array(audio_lengths, dtype=np.int64)
         )
-
+        num_discrete_tokens = 0
+        for sub in discrete_tokens:
+            num_discrete_tokens+=len(sub)
         # (N, 3)
         target_length = (
             input_ids.shape[0] 
             - image_thw_grids.shape[0] + image_thw_grids.prod(axis=-1).sum() // merge_length
             - video_thw_grids.shape[0] + video_thw_grids.prod(axis=-1).sum() // merge_length
             - audio_lengths.shape[0] + audio_lengths.sum()
+            + num_discrete_tokens
         )
         if target_length > self.seq_len:
             raise InternalWarning(f"Long sequence with length {target_length} largger than {self.seq_len} found, dropped...")
@@ -350,7 +293,8 @@ class TaskEncoder(DefaultTaskEncoder[ChatMLSample, EncodedSample, EncodedBatch, 
 
         # WARNING: we do not implement use_audio_in_video = True
         cur_x, cur_y = 0, 0
-        for idx in indices:
+        for i, idx in enumerate(indices):
+            num_disc = len(discrete_tokens[i])
             token_id = input_ids[idx]
             if token_id == image_token_id:
                 size = image_thw_grids[image_idx].prod() // merge_length
@@ -371,7 +315,10 @@ class TaskEncoder(DefaultTaskEncoder[ChatMLSample, EncodedSample, EncodedBatch, 
             final_input_masks[cur_y: cur_y + size] = pad_token_id
             cur_y += size
             cur_x = idx + 1
-        
+            final_input_ids[cur_y: cur_y+num_disc] = discrete_tokens[i]
+            final_input_masks[cur_y: cur_y+num_disc] = discrete_tokens[i]
+            cur_y +=num_disc
+
         if cur_x < len(input_ids):
             final_input_ids[cur_y:] = input_ids[cur_x:]
             final_input_masks[cur_y:] = target[cur_x:]

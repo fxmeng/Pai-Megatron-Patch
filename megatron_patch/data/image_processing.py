@@ -3,6 +3,7 @@ import numpy as np
 import torch
 import math
 import random
+import os
 
 from PIL import Image, ImageDraw
 from torchvision import transforms as T
@@ -40,6 +41,36 @@ def _transform_test():
 def standardize_image(img):
     """Standardize image pixel values."""
     return (torch.Tensor(np.array(img)).permute(2, 0, 1) - pixel_mean) / pixel_std
+
+
+@torch.no_grad
+def get_discrete_image_tokens(
+    root_path,
+    images,
+    vision_tokenizer,
+    device = "cuda",
+    dtype = torch.bfloat16,
+    patch_size = 16,
+    factor=None,
+    min_pixels=None,
+    max_pixels=None
+):
+    if factor is None:
+        factor = 2 * patch_size
+    if min_pixels is None:
+        min_pixels = 4 * patch_size * 4 * patch_size
+    if max_pixels is None:
+        max_pixels = patch_size * patch_size * 4 * 1280
+
+    image_tokens = []
+    for img in images:
+        image_file = os.path.join(root_path,img)
+        image = Image.open(image_file).convert("RGB")
+        image = get_visual_transform(image, factor, min_pixels, max_pixels)[0]
+        image = image.to(device).to(dtype)[None]
+        image = vision_tokenizer.encode(image)[2][-1]
+        image_tokens.append(image.tolist())
+    return image_tokens
 
 
 def get_visual_transform(
