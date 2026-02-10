@@ -2,11 +2,10 @@
 set -e
 unset NCCL_DEBUG
 
-cd /mnt/Pai-Megatron-Patch/examples/qwen3_vl
+cd /mnt/Pai-Megatron-Patch/
 
-CURRENT_DIR=/mnt/Pai-Megatron-Patch/examples/qwen3_vl
-MEGATRON_PATCH_PATH=$( dirname $( dirname ${CURRENT_DIR}))
-export PYTHONPATH=${MEGATRON_PATCH_PATH}:${MEGATRON_PATCH_PATH}/backends/megatron/Megatron-LM-250624:$PYTHONPATH
+CURRENT_DIR=/mnt/Pai-Megatron-Patch/
+export PYTHONPATH=${CURRENT_DIR}:${CURRENT_DIR}/backends/megatron/Megatron-LM-250624:$PYTHONPATH
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NVTE_APPLY_QK_LAYER_SCALING=0
 export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1

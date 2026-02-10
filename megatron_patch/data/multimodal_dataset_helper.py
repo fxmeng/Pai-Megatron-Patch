@@ -260,7 +260,7 @@ class TaskEncoder(DefaultTaskEncoder[ChatMLSample, EncodedSample, EncodedBatch, 
         pad_token_id = self.tokenizer.pad_token_id
         # NOTE: expand image_pad & video_pad & audio_pad
         merge_length = self.merge_size**2
-        image_token_id, video_token_id, audio_token_id = self.tokenizer.encode(['<|image_pad|>', '<|video_pad|>', '<|audio_pad|>'])
+        image_token_id, video_token_id, audio_token_id, first_vision_token_id = self.tokenizer.encode(['<|image_pad|>', '<|video_pad|>', '<|audio_pad|>', "<|vision_0|>"])
         image_token_indices = np.where(input_ids == image_token_id)[0]
         assert len(image_token_indices) == len(image_thw_grids), f"With {len(image_thw_grids)} images in the sample, but {len(image_token_indices)} image placeholders!"
         video_token_indices = np.where(input_ids == video_token_id)[0]
@@ -315,8 +315,8 @@ class TaskEncoder(DefaultTaskEncoder[ChatMLSample, EncodedSample, EncodedBatch, 
             final_input_masks[cur_y: cur_y + size] = pad_token_id
             cur_y += size
             cur_x = idx + 1
-            final_input_ids[cur_y: cur_y+num_disc] = discrete_tokens[i]
-            final_input_masks[cur_y: cur_y+num_disc] = discrete_tokens[i]
+            final_input_ids[cur_y: cur_y+num_disc] = np.array(discrete_tokens[i])+first_vision_token_id
+            final_input_masks[cur_y: cur_y+num_disc] = np.array(discrete_tokens[i])+first_vision_token_id
             cur_y +=num_disc
 
         if cur_x < len(input_ids):

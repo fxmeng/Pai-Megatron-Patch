@@ -2,8 +2,7 @@
 set -e
 
 CURRENT_DIR="$( cd "$( dirname "$0" )" && pwd )"
-MEGATRON_PATCH_PATH=$( dirname $( dirname ${CURRENT_DIR}))
-export PYTHONPATH=${MEGATRON_PATCH_PATH}:${MEGATRON_PATCH_PATH}/backends/megatron/Megatron-LM-250624:$PYTHONPATH
+export PYTHONPATH=${CURRENT_DIR}:${CURRENT_DIR}/backends/megatron/Megatron-LM-250624:$PYTHONPATH
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NVTE_APPLY_QK_LAYER_SCALING=0
 export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
@@ -30,9 +29,9 @@ CP=1
 MBS=1
 GBS=32
 SEQ_LEN=4096
-TRAIN_DATA_PATH=${your_wds_output_dir}
-VALID_DATA_PATH=${your_wds_output_dir}
-PRETRAIN_CHECKPOINT_PATH=/mnt/qwen3-vl-ckpts/Qwen3-VL-30B-A3B-Instruct
+TRAIN_DATA_PATH=/home/tione/notebook/rumimeng/LLaVA-Pretrain/wds/
+VALID_DATA_PATH=/home/tione/notebook/rumimeng/LLaVA-Pretrain/wds/
+PRETRAIN_CHECKPOINT_PATH=/home/tione/notebook/rumimeng/huggingface/Qwen3-VL-30B-A3B-Instruct-updated
 TRAIN_ITERS=500
 LR_WARMUP_ITERS=50
 LR_DECAY_ITERS=450
@@ -76,7 +75,7 @@ MODEL_ARGS_SMALL=(
     --rotary-base 1000000
     --rotary-seq-len-interpolation-factor 1
     --rotary-percent 1.0
-    --padded-vocab-size 151936
+    --padded-vocab-size 282742
     --patch-tokenizer-type Qwen2VLTokenizer
 )
 
