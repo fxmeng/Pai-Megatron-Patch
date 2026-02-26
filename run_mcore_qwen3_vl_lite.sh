@@ -1,41 +1,36 @@
 #!/bin/bash
-set -e
-unset NCCL_DEBUG
-
-cd /mnt/Pai-Megatron-Patch/
-
-CURRENT_DIR=/mnt/Pai-Megatron-Patch/
+CURRENT_DIR=/workspace/rumimeng/Youtu-Megatron/
+cd ${CURRENT_DIR}
 export PYTHONPATH=${CURRENT_DIR}:${CURRENT_DIR}/backends/megatron/Megatron-LM-250624:$PYTHONPATH
-export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NVTE_APPLY_QK_LAYER_SCALING=0
 export NVTE_ALLOW_NONDETERMINISTIC_ALGO=1
-export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=true
+apt-get update && apt-get install -y iproute2
+# ================== 环境变量设置 ==================
+export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
+export GLOO_SOCKET_IFNAME=$(ip addr | grep -i enp | head -1 | awk '{print $2}' | tr -d ':')
+export NCCL_SOCKET_IFNAME=$(ip addr | grep -i enp | head -1 | awk '{print $2}' | tr -d ':')
 
-NUM_NODES=${WORLD_SIZE:-1}
-NODE_RANK=${RANK:-0}
-GPUS_PER_NODE=${KUBERNETES_CONTAINER_RESOURCE_GPU:-$(python -c "import torch; print(torch.cuda.device_count())")}
-[ -z "$MASTER_ADDR" ] && export MASTER_ADDR=localhost
-[ -z "$MASTER_PORT" ] && export MASTER_PORT=${MASTER_PORT:-$(shuf -n 1 -i 10000-65535)}
-DISTRIBUTED_ARGS=(
-    --nnodes $NUM_NODES
-    --node_rank $NODE_RANK
-    --nproc_per_node $GPUS_PER_NODE
-    --master_addr $MASTER_ADDR
-    --master_port $MASTER_PORT
-)
+echo $NNODES
+echo $NPROC_PER_NODE
+echo $CUDA_DEVICE_MAX_CONNECTIONS
+echo $GLOO_SOCKET_IFNAME
+echo $NCCL_SOCKET_IFNAME
+echo $PYTHONPATH
 
-TP=4
-PP=4
-EP=4
+TP=1
+PP=1
+EP=8
 ETP=1
 CP=1
 MBS=1
-GBS=32
-SEQ_LEN=4096
-TRAIN_DATA_PATH=${your_wds_output_dir}
-VALID_DATA_PATH=${your_wds_output_dir}
-PRETRAIN_CHECKPOINT_PATH=/mnt/qwen3-vl-ckpts/Qwen3-VL-30B-A3B-Instruct-to-mcore
-TRAIN_ITERS=500
+GBS=80
+SEQ_LEN=25600
+TRAIN_DATA_PATH=/workspace/data_02111332/vl_wds/HuggingFaceM4/
+VALID_DATA_PATH=/workspace/data_02111332/vl_wds/HuggingFaceM4/
+PRETRAIN_CHECKPOINT_PATH=/workspace/rumimeng/Pai-Megatron-Patch/huggingface/Qwen/Qwen3-VL-5B-A1B-to-mcore
+CHECKPOINT_PATH=${CURRENT_DIR}/checkpoints/qwen3vl-5b-a1b-hfm4
+TENSORBOARD_LOGS_PATH=${CURRENT_DIR}/tensorboard_logs/qwen3vl-5b-a1b-hfm4
+TRAIN_ITERS=5000000
 LR_WARMUP_ITERS=50
 LR_DECAY_ITERS=450
 
@@ -43,20 +38,19 @@ MODEL_ARGS=(
     --transformer-impl transformer_engine
     --attention-dropout 0.0
     --hidden-dropout 0.0
-    --num-layers 48
-    --hidden-size 2048
-    --ffn-hidden-size 6144
-    --moe-ffn-hidden-size 768
+    --num-layers 32
+    --hidden-size 1024
+    --ffn-hidden-size 3072
+    --moe-ffn-hidden-size 640
     --normalization RMSNorm
     --norm-epsilon 1e-6
     --swiglu
     --disable-bias-linear
-    --num-attention-heads 32
+    --num-attention-heads 16
     --seq-length ${SEQ_LEN}
-    --max-position-embeddings 262144
+    --max-position-embeddings ${SEQ_LEN}
     --max-padding-length ${SEQ_LEN}
     --position-embedding-type rope
-    --untie-embeddings-and-output-weights
     --group-query-attention
     --num-query-groups 4
     --moe-router-load-balancing-type aux_loss
@@ -66,25 +60,26 @@ MODEL_ARGS=(
     --moe-router-dtype fp32
     --moe-aux-loss-coeff 0.001
     --moe-router-score-function sigmoid
-    --moe-router-topk 8
-    --moe-layer-freq "'([1]*48)'"
-    --num-experts 128
-    --mrope-section 24 20 20
+    --moe-router-topk 4
+    --moe-layer-freq "([1]*32)"
+    --num-experts 64
     --patch-size 16
     --qk-layernorm
-    --kv-channels 128
+    --kv-channels 64
     --use-rotary-position-embeddings
-    --position-embedding-type mrope
-    --rotary-base 1000000
+    --position-embedding-type rope
+    --rotary-base 100000
     --rotary-seq-len-interpolation-factor 1
     --rotary-percent 1.0
-    --padded-vocab-size 152064
+    --padded-vocab-size 282742
     --patch-tokenizer-type Qwen2VLTokenizer
+    --freeze-ViT
 )
 
 TRAINING_ARGS=(
     --use-mcore-models
     --load ${PRETRAIN_CHECKPOINT_PATH}
+    --save "$CHECKPOINT_PATH"
     --micro-batch-size ${MBS}
     --global-batch-size ${GBS}
     --train-iters ${TRAIN_ITERS}
@@ -94,7 +89,7 @@ TRAINING_ARGS=(
     --init-method-std 0.006
     --clip-grad 1.0
     --bf16
-    --lr 6.0e-5
+    --lr 2.0e-4
     --lr-decay-style cosine
     --min-lr 6.0e-6
     --lr-decay-iters ${LR_DECAY_ITERS}
@@ -106,7 +101,6 @@ TRAINING_ARGS=(
     --disable-vision-class-token
     --dataloader-type external
     --distributed-timeout-minutes 60
-    --exit-duration-in-mins 220
     --no-save-optim
     --no-check-for-nan-in-loss-and-grad
     --manual-gc
@@ -114,15 +108,16 @@ TRAINING_ARGS=(
     --no-load-optim
     --no-load-rng
     --auto-detect-ckpt-format
-    --save-interval 5000000
+    --save-interval 1000
     --eval-iters 32
-    --eval-interval 20000000
+    --eval-interval 1000
     --dist-ckpt-strictness log_all
     --log-timers-to-tensorboard
     --log-memory-to-tensorboard
     --log-validation-ppl-to-tensorboard
     --log-throughput
     --log-interval 1
+    --tensorboard-dir "$TENSORBOARD_LOGS_PATH"
 )
 
 INFRA_ARGS=(
@@ -140,11 +135,12 @@ INFRA_ARGS=(
     --overlap-param-gather
 )
 
-cmd="torchrun ${DISTRIBUTED_ARGS[@]} pretrain_qwen.py \
+exec hyperpodrun \
+    --nnodes=${NNODES} --nproc-per-node=${NPROC_PER_NODE} \
+    --server-host=0.0.0.0 --server-port=8080 \
+    --tee=3 --log_dir=${CURRENT_DIR}/hyperpodrun-logs --server-log-level=warning \
+    pretrain_qwen.py \
     ${MODEL_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
-    ${INFRA_ARGS[@]}"
-
-echo $cmd
-eval $cmd 2>&1 | tee run_qwen3_vl.log ; exit ${PIPESTATUS[0]}
-set +x
+    ${INFRA_ARGS[@]} \
+    2>&1 | tee run_qwen3_vl.log

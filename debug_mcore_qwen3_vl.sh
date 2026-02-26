@@ -28,10 +28,10 @@ ETP=1
 CP=1
 MBS=1
 GBS=32
-SEQ_LEN=4096
-TRAIN_DATA_PATH=/home/tione/notebook/rumimeng/LLaVA-Pretrain/wds/
-VALID_DATA_PATH=/home/tione/notebook/rumimeng/LLaVA-Pretrain/wds/
-PRETRAIN_CHECKPOINT_PATH=/home/tione/notebook/rumimeng/huggingface/Qwen3-VL-30B-A3B-Instruct-updated
+SEQ_LEN=16384
+TRAIN_DATA_PATH=/workspace/data_02111332/vl_wds/HuggingFaceM4/
+VALID_DATA_PATH=/workspace/data_02111332/vl_wds/HuggingFaceM4/
+PRETRAIN_CHECKPOINT_PATH=/workspace/rumimeng/Pai-Megatron-Patch/huggingface/Qwen/Qwen3-VL-30B-A3B-Instruct-updated
 TRAIN_ITERS=500
 LR_WARMUP_ITERS=50
 LR_DECAY_ITERS=450
@@ -50,7 +50,7 @@ MODEL_ARGS_SMALL=(
     --disable-bias-linear
     --num-attention-heads 32
     --seq-length ${SEQ_LEN}
-    --max-position-embeddings 262144
+    --max-position-embeddings ${SEQ_LEN}
     --max-padding-length ${SEQ_LEN}
     --position-embedding-type rope
     --untie-embeddings-and-output-weights
