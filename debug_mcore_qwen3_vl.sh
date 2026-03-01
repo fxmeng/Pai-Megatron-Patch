@@ -41,19 +41,18 @@ MODEL_ARGS_SMALL=(
     --attention-dropout 0.0
     --hidden-dropout 0.0
     --num-layers 4
-    --hidden-size 2048
-    --ffn-hidden-size 6144
-    --moe-ffn-hidden-size 768
+    --hidden-size 1024
+    --ffn-hidden-size 3072
+    --moe-ffn-hidden-size 640
     --normalization RMSNorm
     --norm-epsilon 1e-6
     --swiglu
     --disable-bias-linear
-    --num-attention-heads 32
+    --num-attention-heads 16
     --seq-length ${SEQ_LEN}
     --max-position-embeddings ${SEQ_LEN}
     --max-padding-length ${SEQ_LEN}
     --position-embedding-type rope
-    --untie-embeddings-and-output-weights
     --group-query-attention
     --num-query-groups 4
     --moe-router-load-balancing-type aux_loss
@@ -63,16 +62,15 @@ MODEL_ARGS_SMALL=(
     --moe-router-dtype fp32
     --moe-aux-loss-coeff 0.001
     --moe-router-score-function sigmoid
-    --moe-router-topk 8
-    --moe-layer-freq "'([1]*4)'"
-    --num-experts 128
-    --mrope-section 24 20 20
+    --moe-router-topk 4
+    --moe-layer-freq "([1]*4)"
+    --num-experts 64
     --patch-size 16
     --qk-layernorm
-    --kv-channels 128
+    --kv-channels 64
     --use-rotary-position-embeddings
-    --position-embedding-type mrope
-    --rotary-base 1000000
+    --position-embedding-type rope
+    --rotary-base 100000
     --rotary-seq-len-interpolation-factor 1
     --rotary-percent 1.0
     --padded-vocab-size 282742
@@ -90,7 +88,7 @@ TRAINING_ARGS=(
     --init-method-std 0.006 
     --clip-grad 1.0 
     --bf16
-    --lr 6.0e-5 
+    --lr 2.0e-4 
     --lr-decay-style cosine 
     --min-lr 6.0e-6
     --lr-decay-iters ${LR_DECAY_ITERS}
@@ -102,7 +100,6 @@ TRAINING_ARGS=(
     --disable-vision-class-token
     --dataloader-type external
     --distributed-timeout-minutes 60
-    --exit-duration-in-mins 220
     --no-save-optim
     --no-load-optim
     --no-load-rng
