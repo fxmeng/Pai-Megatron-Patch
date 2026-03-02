@@ -40,7 +40,7 @@ MODEL_ARGS_SMALL=(
     --transformer-impl transformer_engine
     --attention-dropout 0.0
     --hidden-dropout 0.0
-    --num-layers 4
+    --num-layers 32
     --hidden-size 1024
     --ffn-hidden-size 3072
     --moe-ffn-hidden-size 640
@@ -63,7 +63,7 @@ MODEL_ARGS_SMALL=(
     --moe-aux-loss-coeff 0.001
     --moe-router-score-function sigmoid
     --moe-router-topk 4
-    --moe-layer-freq "([1]*4)"
+    --moe-layer-freq "([1]*32)"
     --num-experts 64
     --patch-size 16
     --qk-layernorm
@@ -127,11 +127,7 @@ INFRA_ARGS=(
     --overlap-param-gather
 )
 
-cmd="torchrun ${DISTRIBUTED_ARGS[@]} pretrain_qwen.py \
+torchrun ${DISTRIBUTED_ARGS[@]} pretrain_qwen.py \
     ${MODEL_ARGS_SMALL[@]} \
     ${TRAINING_ARGS[@]} \
-    ${INFRA_ARGS[@]}"
-
-echo $cmd
-eval $cmd 2>&1 | tee test.log ; exit ${PIPESTATUS[0]}
-set +x
+    ${INFRA_ARGS[@]}
