@@ -80,7 +80,7 @@ def iter_jsonl_files(root_dir: str):
         for fn in filenames:
             if fn.endswith(".jsonl"):
                 yield os.path.join(dirpath, fn)
-                
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_root", type=str, default="/workspace/data_02111332/vl_jsonl/")
@@ -111,14 +111,15 @@ def main():
 
         out_dir = os.path.dirname(out_file)
         os.makedirs(out_dir, exist_ok=True)
+        if os.path.exists(out_file):
+            print(f"Skip (already exists): {out_file}")
+            continue
 
         print(f"\nProcessing:\n  IN : {in_file}\n  OUT: {out_file}")
 
         ds = load_dataset("json", data_files=in_file, split="train")
-
-        # map：插入 tokens + token_length，并删除 conversations + discrete_tokens
         ds = ds.map(
-            lambda batch: build_tokens_and_length_batch(
+            lambda batch: conversation_to_tokens_batch(
                 batch,
                 tokenizer=tokenizer,
                 image_token_id=image_token_id,
