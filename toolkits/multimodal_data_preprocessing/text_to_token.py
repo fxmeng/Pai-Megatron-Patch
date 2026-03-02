@@ -95,7 +95,16 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
     image_token_id, first_vision_token_id = tokenizer(["<|image_pad|>", "<|vision_0|>"])["input_ids"]
 
-    jsonl_files = list(iter_jsonl_files(input_root))
+    if os.path.isfile(input_root) and input_root.endswith(".jsonl"):
+        jsonl_files = [input_root]
+        base_input_root = os.path.dirname(input_root)
+    elif os.path.isdir(input_root):
+        jsonl_files = list(iter_jsonl_files(input_root))
+        base_input_root = input_root
+    else:
+        print(f"Invalid input_root: {input_root}")
+        sys.exit(1)
+
     if not jsonl_files:
         print(f"No .jsonl files found under: {input_root}")
         sys.exit(0)
@@ -104,7 +113,7 @@ def main():
     print(f"Output root: {output_root}")
 
     for in_file in jsonl_files:
-        rel_path = os.path.relpath(in_file, input_root)
+        rel_path = os.path.relpath(in_file, base_input_root)
         out_file = os.path.join(output_root, rel_path)
 
         out_dir = os.path.dirname(out_file)
@@ -116,28 +125,34 @@ def main():
         print(f"\nProcessing:\n  IN : {in_file}\n  OUT: {out_file}")
 
         ds = load_dataset("json", data_files=in_file, split="train")
-        ds = ds.map(
-            lambda batch: conversation_to_tokens_batch(
-                batch,
-                tokenizer=tokenizer,
-                image_token_id=image_token_id,
-                first_vision_token_id=first_vision_token_id,
-                spatial_merge_size=2,
-            ),
-            batched=True,
-            batch_size=args.batch_size,
-            num_proc=args.num_proc,
-            remove_columns=["conversations", "discrete_tokens"],
-            desc=f"Tokenizing {rel_path}",
-        )
+        try:
+            ds = ds.map(
+                lambda batch: conversation_to_tokens_batch(
+                    batch,
+                    tokenizer=tokenizer,
+                    image_token_id=image_token_id,
+                    first_vision_token_id=first_vision_token_id,
+                    spatial_merge_size=2,
+                ),
+                batched=True,
+                batch_size=args.batch_size,
+                num_proc=args.num_proc,
+                remove_columns=["conversations", "discrete_tokens"],
+                desc=f"Tokenizing {rel_path}",
+            )
 
-        # 保存为 jsonl（同结构）
-        ds.to_json(
-            out_file,
-            orient="records",
-            lines=True,
-            force_ascii=False,
-        )
+            # 保存为 jsonl（同结构）
+            ds.to_json(
+                out_file,
+                orient="records",
+                lines=True,
+                force_ascii=False,
+            )
+        except Exception as e:
+            print(f"\n❌ Failed processing: {in_file}")
+            print(f"Reason: {str(e)}")
+            print("Skipping this file...\n")
+            continue
 
     print("\nAll done.")
 
