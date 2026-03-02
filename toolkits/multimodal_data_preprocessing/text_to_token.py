@@ -5,37 +5,35 @@ import argparse
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-spatial_merge_size = 2
-merge_length = spatial_merge_size ** 2
+def conversation_to_tokens_batch(batch, tokenizer, image_token_id, first_vision_token_id, spatial_merge_size=2):
+    merge_length = spatial_merge_size ** 2
+    out_tokens = []
+    out_lengths = []
 
-def conversation_to_tokens_batch(batch):
-    all_tokens = []
-    all_token_lens = []
-
-    for conversations, discrete_tokens in zip(
-        batch["conversations"], batch["discrete_tokens"]
-    ):
-        # 拼接文本
+    for conversations, discrete_tokens in zip(batch["conversations"], batch["discrete_tokens"]):
+        # 1) 拼接文本
         conversation_text = "\n".join([conv["content"] for conv in conversations])
         conversation_text = conversation_text.replace(
             "<image>", "<|vision_start|><|image_pad|><|vision_end|>"
         )
 
+        # 2) 文本 tokenization
         input_ids = tokenizer(
             conversation_text,
             padding="do_not_pad",
-            return_tensors="np"
+            return_tensors="np",
         ).input_ids[0]
 
+        # 3) 找出 image token 位置
         image_token_indices = np.where(input_ids == image_token_id)[0]
+
+        # 4) 计算 target length
         num_discrete_tokens = sum(len(sub) for sub in discrete_tokens)
-
-
         target_length = (
             input_ids.shape[0]
-            - len(discrete_tokens)
-            + num_discrete_tokens // merge_length
-            + num_discrete_tokens
+            - len(discrete_tokens)                          # 每个 image_pad 被替换掉 1 个
+            + (num_discrete_tokens // merge_length)         # 展开后的 image_pad 长度
+            + num_discrete_tokens                           # 插入的离散 tokens
         )
 
         final_input_ids = np.zeros(target_length, dtype=input_ids.dtype)
@@ -43,37 +41,37 @@ def conversation_to_tokens_batch(batch):
         cur_x, cur_y, image_idx = 0, 0, 0
 
         for i, idx in enumerate(image_token_indices):
+            # discrete token 数
             num_disc = len(discrete_tokens[i])
-            token_id = input_ids[idx]
 
+            # image_pad 展开长度（按你的逻辑：len(discrete)//merge_length）
             size = len(discrete_tokens[image_idx]) // merge_length
             image_idx += 1
 
-            # 文本部分
-            final_input_ids[cur_y: cur_y + idx - cur_x] = input_ids[cur_x:idx]
-            cur_y += idx - cur_x
+            # copy text before image token
+            final_input_ids[cur_y : cur_y + (idx - cur_x)] = input_ids[cur_x:idx]
+            cur_y += (idx - cur_x)
 
-            # image token 展开
-            final_input_ids[cur_y: cur_y + size] = token_id
+            # expanded image token (重复 image_token_id)
+            final_input_ids[cur_y : cur_y + size] = image_token_id
             cur_y += size
+
+            # skip original image token
             cur_x = idx + 1
 
-            # discrete tokens
-            final_input_ids[cur_y: cur_y + num_disc] = (
-                np.array(discrete_tokens[i]) + first_vision_token_id
-            )
+            # insert discrete tokens (offset by first_vision_token_id)
+            final_input_ids[cur_y : cur_y + num_disc] = np.array(discrete_tokens[i], dtype=final_input_ids.dtype) + first_vision_token_id
             cur_y += num_disc
 
+        # copy remaining tail tokens
         if cur_x < len(input_ids):
             final_input_ids[cur_y:] = input_ids[cur_x:]
 
-        all_tokens.append(final_input_ids.tolist())
-        all_token_lens.append(final_input_ids.shape[0])
+        tokens_list = final_input_ids.tolist()
+        out_tokens.append(tokens_list)
+        out_lengths.append(len(tokens_list))
 
-    return {
-        "tokens": all_tokens,
-        "lens": all_token_lens,
-    }
+    return {"tokens": out_tokens, "token_length": out_lengths}
 
 def iter_jsonl_files(root_dir: str):
     for dirpath, _, filenames in os.walk(root_dir):
