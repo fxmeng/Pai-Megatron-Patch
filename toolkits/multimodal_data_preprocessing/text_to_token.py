@@ -75,6 +75,12 @@ def conversation_to_tokens_batch(batch):
         "lens": all_token_lens,
     }
 
+def iter_jsonl_files(root_dir: str):
+    for dirpath, _, filenames in os.walk(root_dir):
+        for fn in filenames:
+            if fn.endswith(".jsonl"):
+                yield os.path.join(dirpath, fn)
+                
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_root", type=str, default="/workspace/data_02111332/vl_jsonl/")
