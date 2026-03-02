@@ -1,11 +1,10 @@
 import os
 import sys
 import numpy as np
+import argparse
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-tokenizer = AutoTokenizer.from_pretrained(sys.argv[1])
-image_token_id, first_vision_token_id = tokenizer(["<|image_pad|>", "<|vision_0|>"])["input_ids"]
 spatial_merge_size = 2
 merge_length = spatial_merge_size ** 2
 
@@ -76,23 +75,67 @@ def conversation_to_tokens_batch(batch):
         "lens": all_token_lens,
     }
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_root", type=str, default="/workspace/data_02111332/vl_jsonl/")
+    parser.add_argument("--output_root", type=str, default="/workspace/data_02111332/vl_tokens_jsonl/")
+    parser.add_argument("--tokenizer", type=str, required=True, help="HF tokenizer name or local path")
+    parser.add_argument("--num_proc", type=int, default=max(os.cpu_count() - 1, 1))
+    parser.add_argument("--batch_size", type=int, default=512)
+    args = parser.parse_args()
 
-dataset = load_dataset("json", data_files=sys.argv[2], split="train")
+    input_root = os.path.abspath(args.input_root)
+    output_root = os.path.abspath(args.output_root)
+    os.makedirs(output_root, exist_ok=True)
 
-dataset = dataset.map(
-    conversation_to_tokens_batch,
-    batched=True,
-    batch_size=512, 
-    num_proc=max(os.cpu_count() - 1, 1),
-    remove_columns=["conversations", "discrete_tokens"],
-    desc="Building tokens",
-)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
+    image_token_id, first_vision_token_id = tokenizer(["<|image_pad|>", "<|vision_0|>"])["input_ids"]
 
-print(dataset.column_names)
+    jsonl_files = list(iter_jsonl_files(input_root))
+    if not jsonl_files:
+        print(f"No .jsonl files found under: {input_root}")
+        sys.exit(0)
 
-dataset.to_json(
-    sys.argv[3],
-    orient="records",   # 一行一个样本
-    lines=True,         # JSONL 格式
-    force_ascii=False   # 保留中文
-)
+    print(f"Found {len(jsonl_files)} jsonl files under: {input_root}")
+    print(f"Output root: {output_root}")
+
+    for in_file in jsonl_files:
+        rel_path = os.path.relpath(in_file, input_root)
+        out_file = os.path.join(output_root, rel_path)
+
+        out_dir = os.path.dirname(out_file)
+        os.makedirs(out_dir, exist_ok=True)
+
+        print(f"\nProcessing:\n  IN : {in_file}\n  OUT: {out_file}")
+
+        ds = load_dataset("json", data_files=in_file, split="train")
+
+        # map：插入 tokens + token_length，并删除 conversations + discrete_tokens
+        ds = ds.map(
+            lambda batch: build_tokens_and_length_batch(
+                batch,
+                tokenizer=tokenizer,
+                image_token_id=image_token_id,
+                first_vision_token_id=first_vision_token_id,
+                spatial_merge_size=2,
+            ),
+            batched=True,
+            batch_size=args.batch_size,
+            num_proc=args.num_proc,
+            remove_columns=["conversations", "discrete_tokens"],
+            desc=f"Tokenizing {rel_path}",
+        )
+
+        # 保存为 jsonl（同结构）
+        ds.to_json(
+            out_file,
+            orient="records",
+            lines=True,
+            force_ascii=False,
+        )
+
+    print("\nAll done.")
+
+
+if __name__ == "__main__":
+    main()
