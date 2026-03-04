@@ -11,65 +11,70 @@ def conversation_to_tokens_batch(batch, tokenizer, image_token_id, first_vision_
     out_lengths = []
 
     for conversations, discrete_tokens in zip(batch["conversations"], batch["discrete_tokens"]):
-        # 1) 拼接文本
-        conversation_text = "\n".join([conv["content"] for conv in conversations])
-        conversation_text = conversation_text.replace(
-            "<image>", "<|vision_start|><|image_pad|><|vision_end|>"
-        )
+        try:
+            # 1) 拼接文本
+            conversation_text = "\n".join([conv["content"] for conv in conversations])
+            conversation_text = conversation_text.replace(
+                "<image>", "<|vision_start|><|image_pad|><|vision_end|>"
+            )
 
-        # 2) 文本 tokenization
-        input_ids = tokenizer(
-            conversation_text,
-            padding="do_not_pad",
-            return_tensors="np",
-        ).input_ids[0]
+            # 2) 文本 tokenization
+            input_ids = tokenizer(
+                conversation_text,
+                padding="do_not_pad",
+                return_tensors="np",
+            ).input_ids[0]
 
-        # 3) 找出 image token 位置
-        image_token_indices = np.where(input_ids == image_token_id)[0]
+            # 3) 找出 image token 位置
+            image_token_indices = np.where(input_ids == image_token_id)[0]
 
-        # 4) 计算 target length
-        num_discrete_tokens = sum(len(sub) for sub in discrete_tokens)
-        target_length = (
-            input_ids.shape[0]
-            - len(discrete_tokens)                          # 每个 image_pad 被替换掉 1 个
-            + (num_discrete_tokens // merge_length)         # 展开后的 image_pad 长度
-            + num_discrete_tokens                           # 插入的离散 tokens
-        )
+            # 4) 计算 target length
+            num_discrete_tokens = sum(len(sub) for sub in discrete_tokens)
+            target_length = (
+                input_ids.shape[0]
+                - len(discrete_tokens)                          # 每个 image_pad 被替换掉 1 个
+                + (num_discrete_tokens // merge_length)         # 展开后的 image_pad 长度
+                + num_discrete_tokens                           # 插入的离散 tokens
+            )
 
-        final_input_ids = np.zeros(target_length, dtype=input_ids.dtype)
+            final_input_ids = np.zeros(target_length, dtype=input_ids.dtype)
 
-        cur_x, cur_y, image_idx = 0, 0, 0
+            cur_x, cur_y, image_idx = 0, 0, 0
 
-        for i, idx in enumerate(image_token_indices):
-            # discrete token 数
-            num_disc = len(discrete_tokens[i])
+            for i, idx in enumerate(image_token_indices):
+                # discrete token 数
+                num_disc = len(discrete_tokens[i])
 
-            # image_pad 展开长度（按你的逻辑：len(discrete)//merge_length）
-            size = len(discrete_tokens[image_idx]) // merge_length
-            image_idx += 1
+                # image_pad 展开长度（按你的逻辑：len(discrete)//merge_length）
+                size = len(discrete_tokens[image_idx]) // merge_length
+                image_idx += 1
 
-            # copy text before image token
-            final_input_ids[cur_y : cur_y + (idx - cur_x)] = input_ids[cur_x:idx]
-            cur_y += (idx - cur_x)
+                # copy text before image token
+                final_input_ids[cur_y : cur_y + (idx - cur_x)] = input_ids[cur_x:idx]
+                cur_y += (idx - cur_x)
 
-            # expanded image token (重复 image_token_id)
-            final_input_ids[cur_y : cur_y + size] = image_token_id
-            cur_y += size
+                # expanded image token (重复 image_token_id)
+                final_input_ids[cur_y : cur_y + size] = image_token_id
+                cur_y += size
 
-            # skip original image token
-            cur_x = idx + 1
+                # skip original image token
+                cur_x = idx + 1
 
-            # insert discrete tokens (offset by first_vision_token_id)
-            final_input_ids[cur_y : cur_y + num_disc] = np.array(discrete_tokens[i], dtype=final_input_ids.dtype) + first_vision_token_id
-            cur_y += num_disc
+                # insert discrete tokens (offset by first_vision_token_id)
+                final_input_ids[cur_y : cur_y + num_disc] = np.array(discrete_tokens[i], dtype=final_input_ids.dtype) + first_vision_token_id
+                cur_y += num_disc
 
-        # copy remaining tail tokens
-        if cur_x < len(input_ids):
-            final_input_ids[cur_y:] = input_ids[cur_x:]
+            # copy remaining tail tokens
+            if cur_x < len(input_ids):
+                final_input_ids[cur_y:] = input_ids[cur_x:]
 
-        tokens_list = final_input_ids.tolist()
-        out_tokens.append(tokens_list)
-        out_lengths.append(len(tokens_list))
+            tokens_list = final_input_ids.tolist()
+            out_tokens.append(tokens_list)
+            out_lengths.append(len(tokens_list))
+
+        except Exception as e:
+            print(f"⚠️ Skip bad sample in batch: {str(e)}")
+            continue
 
     return {"tokens": out_tokens, "token_length": out_lengths}
 
@@ -125,34 +130,30 @@ def main():
         print(f"\nProcessing:\n  IN : {in_file}\n  OUT: {out_file}")
 
         ds = load_dataset("json", data_files=in_file, split="train")
-        try:
-            ds = ds.map(
-                lambda batch: conversation_to_tokens_batch(
-                    batch,
-                    tokenizer=tokenizer,
-                    image_token_id=image_token_id,
-                    first_vision_token_id=first_vision_token_id,
-                    spatial_merge_size=2,
-                ),
-                batched=True,
-                batch_size=args.batch_size,
-                num_proc=args.num_proc,
-                remove_columns=["conversations", "discrete_tokens"],
-                desc=f"Tokenizing {rel_path}",
-            )
 
-            # 保存为 jsonl（同结构）
-            ds.to_json(
-                out_file,
-                orient="records",
-                lines=True,
-                force_ascii=False,
-            )
-        except Exception as e:
-            print(f"\n❌ Failed processing: {in_file}")
-            print(f"Reason: {str(e)}")
-            print("Skipping this file...\n")
-            continue
+        ds = ds.map(
+            lambda batch: conversation_to_tokens_batch(
+                batch,
+                tokenizer=tokenizer,
+                image_token_id=image_token_id,
+                first_vision_token_id=first_vision_token_id,
+                spatial_merge_size=2,
+            ),
+            batched=True,
+            batch_size=args.batch_size,
+            num_proc=args.num_proc,
+            remove_columns=["conversations", "discrete_tokens"],
+            desc=f"Tokenizing {rel_path}",
+        )
+
+        # 保存为 jsonl（同结构）
+        ds.to_json(
+            out_file,
+            orient="records",
+            lines=True,
+            force_ascii=False,
+        )
+
 
     print("\nAll done.")
 
