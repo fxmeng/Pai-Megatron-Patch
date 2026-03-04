@@ -73,7 +73,7 @@ def conversation_to_tokens_batch(batch, tokenizer, image_token_id, first_vision_
             out_lengths.append(len(tokens_list))
 
         except Exception as e:
-            print(f"⚠️ Skip bad sample in batch: {str(e)}")
+            #print(f"⚠️ Skip bad sample in batch: {str(e)}")
             continue
 
     return {"tokens": out_tokens, "token_length": out_lengths}
