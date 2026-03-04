@@ -7,13 +7,12 @@ from transformers import AutoTokenizer
 
 def conversation_to_tokens_batch(batch, tokenizer, image_token_id, first_vision_token_id, spatial_merge_size=2):
     merge_length = spatial_merge_size ** 2
-    bs = len(batch["conversations"])
 
-    # 关键：先用占位把长度对齐，避免“没append/字段缺失/某列全None”
-    out_tokens = [[] for _ in range(bs)]
-    out_lengths = [0 for _ in range(bs)]
+    out_tokens = []
+    out_lengths = []
 
-    for j, (conversations, discrete_tokens) in enumerate(zip(batch["conversations"], batch["discrete_tokens"])):
+    for conversations, discrete_tokens in zip(batch["conversations"], batch["discrete_tokens"]):
+
         try:
             conversation_text = "\n".join([conv["content"] for conv in conversations])
             conversation_text = conversation_text.replace(
@@ -28,10 +27,8 @@ def conversation_to_tokens_batch(batch, tokenizer, image_token_id, first_vision_
 
             image_token_indices = np.where(input_ids == image_token_id)[0]
 
-            # 可选：不直接报错，按最小数量对齐，避免 mismatch 大量跳过
-            num_images = min(len(image_token_indices), len(discrete_tokens))
-            image_token_indices = image_token_indices[:num_images]
-            discrete_tokens = discrete_tokens[:num_images]
+            #if len(image_token_indices) != len(discrete_tokens):
+            #    raise ValueError("image token mismatch")
 
             num_discrete_tokens = sum(len(sub) for sub in discrete_tokens)
 
@@ -41,13 +38,13 @@ def conversation_to_tokens_batch(batch, tokenizer, image_token_id, first_vision_
                 + (num_discrete_tokens // merge_length)
                 + num_discrete_tokens
             )
-            if target_length <= 0:
-                raise ValueError("abnormal target_length")
 
             final_input_ids = np.zeros(target_length, dtype=input_ids.dtype)
 
             cur_x, cur_y, image_idx = 0, 0, 0
+
             for i, idx in enumerate(image_token_indices):
+
                 num_disc = len(discrete_tokens[i])
                 size = len(discrete_tokens[image_idx]) // merge_length
                 image_idx += 1
@@ -61,7 +58,8 @@ def conversation_to_tokens_batch(batch, tokenizer, image_token_id, first_vision_
                 cur_x = idx + 1
 
                 final_input_ids[cur_y: cur_y + num_disc] = (
-                    np.array(discrete_tokens[i], dtype=final_input_ids.dtype) + first_vision_token_id
+                    np.array(discrete_tokens[i], dtype=final_input_ids.dtype)
+                    + first_vision_token_id
                 )
                 cur_y += num_disc
 
@@ -70,14 +68,20 @@ def conversation_to_tokens_batch(batch, tokenizer, image_token_id, first_vision_
 
             tokens = final_input_ids.tolist()
 
-            out_tokens[j] = tokens
-            out_lengths[j] = int(len(tokens))
+            out_tokens.append(tokens)
+            out_lengths.append(len(tokens))
 
         except Exception as e:
-            # 关键：这里什么都不用做，占位已经是 [] / 0
-            print(f"⚠️ Skip bad sample: {e}")
+            #print(f"⚠️ Skip bad sample: {e}")
 
-    return {"tokens": out_tokens, "token_length": out_lengths}
+            # 用 None 占位，保证长度一致
+            out_tokens.append(None)
+            out_lengths.append(None)
+
+    return {
+        "tokens": out_tokens,
+        "token_length": out_lengths,
+    }
 
 def iter_jsonl_files(root_dir: str):
     for dirpath, _, filenames in os.walk(root_dir):
@@ -131,30 +135,36 @@ def main():
         print(f"\nProcessing:\n  IN : {in_file}\n  OUT: {out_file}")
 
         ds = load_dataset("json", data_files=in_file, split="train")
+        try:
+            ds = ds.map(
+                lambda batch: conversation_to_tokens_batch(
+                    batch,
+                    tokenizer=tokenizer,
+                    image_token_id=image_token_id,
+                    first_vision_token_id=first_vision_token_id,
+                    spatial_merge_size=2,
+                ),
+                batched=True,
+                batch_size=args.batch_size,
+                num_proc=args.num_proc,
+                remove_columns=["conversations", "discrete_tokens"],
+                desc=f"Tokenizing {rel_path}",
+            )
 
-        ds = ds.map(
-            lambda batch: conversation_to_tokens_batch(
-                batch,
-                tokenizer=tokenizer,
-                image_token_id=image_token_id,
-                first_vision_token_id=first_vision_token_id,
-                spatial_merge_size=2,
-            ),
-            batched=True,
-            batch_size=args.batch_size,
-            num_proc=args.num_proc,
-            remove_columns=["conversations", "discrete_tokens"],
-            desc=f"Tokenizing {rel_path}",
-        )
+            ds = ds.filter(lambda x: x["tokens"] is not None)
 
-        ds = ds.filter(lambda x: x["tokens"] is not None)
+            ds.to_json(
+                out_file,
+                orient="records",
+                lines=True,
+                force_ascii=False,
+            )
 
-        ds.to_json(
-            out_file,
-            orient="records",
-            lines=True,
-            force_ascii=False,
-        )
+        except Exception as e:
+            print(f"\n❌ Failed processing: {in_file}")
+            print(f"Reason: {str(e)}")
+            print("Skipping this file...\n")
+            continue
 
     print("\nAll done.")
 
